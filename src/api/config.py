@@ -42,7 +42,13 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> URL:
         if self.database_url_override:
-            return make_url(self.database_url_override)
+            url = make_url(self.database_url_override)
+            # Render supplies a plain postgres:// URL. This project uses the
+            # psycopg v3 driver, so make the driver explicit for SQLAlchemy
+            # and Alembic instead of falling back to psycopg2.
+            if url.drivername in {"postgres", "postgresql"}:
+                url = url.set(drivername="postgresql+psycopg")
+            return url
         return URL.create(
             "postgresql+psycopg",
             username=self.postgres_user,

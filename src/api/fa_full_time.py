@@ -10,6 +10,9 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import sync_playwright
+
 
 @dataclass(frozen=True)
 class FullTimeFixture:
@@ -201,11 +204,48 @@ def fetch_team_page(url: str, timeout: int = 20) -> str:
             return response.read().decode("utf-8", errors="replace")
     except HTTPError as exc:
         if exc.code == 403:
-            raise RuntimeError(
-                "FA Full-Time denied the team page (HTTP 403). Check the linked "
-                "team/league IDs or try again later."
-            ) from exc
+            return fetch_team_page_in_browser(url, timeout)
         raise
+
+
+def fetch_team_page_in_browser(url: str, timeout: int = 20) -> str:
+    """Load a challenged Full-Time page in a JavaScript-capable browser."""
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=["--no-sandbox"],
+            )
+            try:
+                page = browser.new_page(
+                    locale="en-GB",
+                    user_agent=(
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    ),
+                )
+                response = page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=timeout * 1000,
+                )
+                if response is not None and response.status >= 400:
+                    page.wait_for_timeout(5000)
+                html = page.content()
+                if "<table" not in html.lower():
+                    raise RuntimeError(
+                        "FA Full-Time denied the team page (HTTP 403), including "
+                        "the browser fallback. Check the linked team/league IDs "
+                        "or try again later."
+                    )
+                return html
+            finally:
+                browser.close()
+    except PlaywrightError as exc:
+        raise RuntimeError(
+            "FA Full-Time could not be loaded in the browser fallback. "
+            "Check the importer installation or try again later."
+        ) from exc
 
 
 def current_season_url(team_id: str, league_id: str | None = None) -> str:

@@ -6,7 +6,7 @@ import re
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, exists, func, or_, select
 
 from api.config import get_settings
 from api.database import SessionLocal
@@ -27,22 +27,42 @@ def _normalise_team_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
+def _team_name_matches(configured: str, provider: str) -> bool:
+    configured_normalised = _normalise_team_name(configured)
+    provider_normalised = _normalise_team_name(provider)
+    if configured_normalised in provider_normalised or provider_normalised in configured_normalised:
+        return True
+    ignored = {
+        "afc", "city", "fc", "first", "ladies", "men", "mens", "reserves",
+        "reserve", "town", "u", "united", "wanderers", "women", "womens",
+    }
+    configured_tokens = {
+        token for token in re.findall(r"[a-z0-9]+", configured.lower())
+        if token not in ignored and len(token) > 2
+    }
+    provider_tokens = {
+        token for token in re.findall(r"[a-z0-9]+", provider.lower())
+        if token not in ignored and len(token) > 2
+    }
+    return bool(configured_tokens & provider_tokens)
+
+
 def _fixture_team_details(
     item: FullTimeFixture, team: Team
 ) -> tuple[str | None, bool | None]:
     """Resolve the imported opposition against the team's provider display name."""
-    team_name = _normalise_team_name(team.external_name or team.name)
-    home_name = _normalise_team_name(item.home_team)
-    away_name = _normalise_team_name(item.away_team)
-    if team_name and (team_name in home_name or home_name in team_name):
+    team_name = team.external_name or team.name
+    if _team_name_matches(team_name, item.home_team):
         return item.away_team, True
-    if team_name and (team_name in away_name or away_name in team_name):
+    if _team_name_matches(team_name, item.away_team):
         return item.home_team, False
     return None, None
 
 
 def import_fixtures(
-    club_id: UUID | None = None, queued_only: bool = False
+    club_id: UUID | None = None,
+    queued_only: bool = False,
+    daily_only: bool = False,
 ) -> tuple[int, int, int]:
     created = updated = skipped = 0
     with SessionLocal.begin() as session:
@@ -66,6 +86,16 @@ def import_fixtures(
             query = select(Team).where(
                 Team.external_provider == "fa_full_time", Team.external_id.is_not(None)
             )
+            if daily_only:
+                yesterday = date.today() - timedelta(days=1)
+                query = query.where(
+                    exists(
+                        select(Fixture.fixture_id).where(
+                            Fixture.team_id == Team.team_id,
+                            func.date(Fixture.starts_at) == yesterday,
+                        )
+                    )
+                )
             if club_id is not None:
                 query = query.where(Team.club_id == club_id)
             team_runs = [(team, None) for team in session.scalars(query).all()]
@@ -137,6 +167,8 @@ def import_fixtures(
             team_created = team_updated = 0
             for item in parsed:
                 opposition, is_home = _fixture_team_details(item, team)
+                if team.external_name is None and is_home is not None:
+                    team.external_name = item.home_team if is_home else item.away_team
                 fixture = session.scalar(
                     select(Fixture).where(
                         Fixture.external_provider == "fa_full_time",
@@ -207,11 +239,14 @@ def import_fixtures(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--queued", action="store_true")
+    parser.add_argument("--daily", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
-    created, updated, skipped = import_fixtures(queued_only=args.queued)
+    created, updated, skipped = import_fixtures(
+        queued_only=args.queued, daily_only=args.daily
+    )
     logger.info(
         "Full-Time fixtures: %s created, %s updated, %s teams skipped",
         created,

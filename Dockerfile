@@ -11,6 +11,7 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-install-project
 COPY src ./src
 RUN uv sync --locked
+RUN playwright install --with-deps chromium
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY scripts ./scripts

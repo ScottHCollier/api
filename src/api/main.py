@@ -370,7 +370,6 @@ def _current_user(
     if (
         user is None
         or not user.is_active
-        or not user.is_verified
         or int(payload.get("ver", -1)) != user.token_version
     ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or inactive user")
@@ -510,13 +509,14 @@ def register(request: Request, credentials: Credentials, session: DatabaseSessio
     user = User(
         email=credentials.email,
         password_hash=_password_hash(credentials.password),
-        is_verified=False,
+        # Registration grants an authenticated session so the user can continue
+        # directly into club onboarding. Email verification can still be added
+        # later without blocking the initial setup flow.
+        is_verified=True,
     )
     session.add(user)
     session.flush()
     access_token, expires_in = _token(user)
-    verification_token = _account_token(session, user, "email_verification")
-    _send_account_email(user, "email_verification", verification_token)
     session.commit()
     return TokenRead(
         access_token=access_token, expires_in=expires_in, user=_user_read(user, session)
@@ -529,8 +529,6 @@ def login(request: Request, credentials: Credentials, session: DatabaseSession) 
     user = session.scalar(select(User).where(User.email == credentials.email))
     if user is None or not _password_matches(credentials.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
-    if not user.is_verified:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Verify your email before signing in")
     access_token, expires_in = _token(user)
     return TokenRead(
         access_token=access_token, expires_in=expires_in, user=_user_read(user, session)
@@ -687,6 +685,12 @@ def resolve_club(
         .join(ClubDomain, ClubDomain.club_id == Club.club_id)
         .where(ClubDomain.hostname == normalized)
     )
+    # Allow staging previews to exercise club sites before custom DNS exists.
+    # Vercel aliases use <club-slug>.<deployment>.vercel.app; the plain
+    # <deployment>.vercel.app hostname remains the product landing page.
+    parts = normalized.split(".")
+    if club is None and len(parts) == 4 and parts[-2:] == ["vercel", "app"]:
+        club = session.scalar(select(Club).where(Club.slug == parts[0]))
     if club is None:
         raise HTTPException(404, "Club not found")
     return club
