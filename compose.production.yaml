@@ -1,0 +1,26 @@
+services:
+  object-storage:
+    restart: unless-stopped
+    ports: []
+
+  object-storage-init:
+    restart: "no"
+
+  db:
+    restart: unless-stopped
+    ports: []
+
+  api:
+    command: ["sh", "scripts/start_production.sh"]
+    restart: unless-stopped
+    ports: []
+    volumes: []
+    environment:
+      SEED_ON_STARTUP: "false"
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?Set OBJECT_STORAGE_SECRET_KEY}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+
+  fixture-importer:
+    restart: unless-stopped

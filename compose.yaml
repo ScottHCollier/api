@@ -1,0 +1,115 @@
+name: final-third-api
+
+services:
+  object-storage:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${OBJECT_STORAGE_ACCESS_KEY:-final-third-dev}
+      MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE_SECRET_KEY:-final-third-dev-secret}
+    ports:
+      - "127.0.0.1:${OBJECT_STORAGE_PORT:-9000}:9000"
+      - "127.0.0.1:${OBJECT_STORAGE_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - object_storage_data:/data
+
+  object-storage-init:
+    image: minio/mc:latest
+    depends_on:
+      - object-storage
+    environment:
+      MINIO_ROOT_USER: ${OBJECT_STORAGE_ACCESS_KEY:-final-third-dev}
+      MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE_SECRET_KEY:-final-third-dev-secret}
+      MINIO_BUCKET: ${OBJECT_STORAGE_BUCKET:-final-third-media}
+      MINIO_PRIVATE_BUCKET: ${OBJECT_STORAGE_PRIVATE_BUCKET:-final-third-private}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        until mc alias set local http://object-storage:9000 "$$MINIO_ROOT_USER"
+        "$$MINIO_ROOT_PASSWORD"; do sleep 1; done;
+        mc mb --ignore-existing "local/$$MINIO_BUCKET";
+        mc mb --ignore-existing "local/$$MINIO_PRIVATE_BUCKET";
+        mc anonymous set download "local/$$MINIO_BUCKET";
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-final_third}
+      POSTGRES_USER: ${POSTGRES_USER:-final_third}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-final_third_dev}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  api:
+    build: .
+    init: true
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-final_third}
+      POSTGRES_USER: ${POSTGRES_USER:-final_third}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-final_third_dev}
+      SEED_ON_STARTUP: ${SEED_ON_STARTUP:-false}
+      AUTH_SECRET: ${AUTH_SECRET:-change-this-development-auth-secret}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000","http://montpellier-fc.localhost:3000","http://oakwood-united.localhost:3000"]}'
+      WATCHFILES_FORCE_POLLING: ${WATCHFILES_FORCE_POLLING:-false}
+      FA_IMPORT_ENABLED: ${FA_IMPORT_ENABLED:-true}
+      FA_IMPORT_INTERVAL_SECONDS: ${FA_IMPORT_INTERVAL_SECONDS:-86400}
+      FA_REQUEST_TIMEOUT_SECONDS: ${FA_REQUEST_TIMEOUT_SECONDS:-20}
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-us-east-1}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-final-third-media}
+      OBJECT_STORAGE_PRIVATE_BUCKET: ${OBJECT_STORAGE_PRIVATE_BUCKET:-final-third-private}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-final-third-dev}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-final-third-dev-secret}
+      OBJECT_STORAGE_PUBLIC_BASE_URL: ${OBJECT_STORAGE_PUBLIC_BASE_URL:-http://localhost:9000/final-third-media}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - ./src:/app/src:Z
+      - ./migrations:/app/migrations:Z
+      - ./alembic.ini:/app/alembic.ini:Z
+      - ./scripts:/app/scripts:Z
+      - ./tests:/app/tests:Z
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  fixture-importer:
+    build: .
+    init: true
+    restart: unless-stopped
+    command: ["sh", "scripts/import_daily.sh"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-final_third}
+      POSTGRES_USER: ${POSTGRES_USER:-final_third}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-final_third_dev}
+      FA_IMPORT_ENABLED: ${FA_IMPORT_ENABLED:-true}
+      FA_IMPORT_INTERVAL_SECONDS: ${FA_IMPORT_INTERVAL_SECONDS:-86400}
+      FA_REQUEST_TIMEOUT_SECONDS: ${FA_REQUEST_TIMEOUT_SECONDS:-20}
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  object_storage_data:
