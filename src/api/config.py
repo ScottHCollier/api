@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     object_storage_secret_key: SecretStr = SecretStr("final-third-dev-secret")
     object_storage_public_base_url: str = "http://localhost:9000/final-third-media"
     app_base_url: str = "http://localhost:3000"
+    club_base_domain: str | None = None
     resend_api_key: SecretStr | None = None
     email_from: str | None = None
     resend_audience_id: str | None = None

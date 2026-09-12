@@ -637,7 +637,9 @@ def create_club(
     club = Club(name=details.name.strip(), slug=details.slug)
     session.add(club)
     session.flush()
-    session.add(ClubDomain(hostname=f"{club.slug}.localhost", club_id=club.club_id))
+    base_domain = get_settings().club_base_domain
+    hostname = f"{club.slug}.{base_domain}" if base_domain else f"{club.slug}.localhost"
+    session.add(ClubDomain(hostname=hostname, club_id=club.club_id))
     session.add(
         ClubMembership(user_id=user.user_id, club_id=club.club_id, role="owner")
     )
@@ -691,6 +693,19 @@ def resolve_club(
     parts = normalized.split(".")
     if club is None and len(parts) == 4 and parts[-2:] == ["vercel", "app"]:
         club = session.scalar(select(Club).where(Club.slug == parts[0]))
+    if club is None:
+        raise HTTPException(404, "Club not found")
+    return club
+
+
+@app.get(
+    "/api/v1/public/clubs/{club_id}",
+    response_model=ClubRead,
+    response_model_exclude_none=True,
+    tags=["clubs"],
+)
+def get_public_club(club_id: UUID, session: DatabaseSession) -> Club:
+    club = session.get(Club, club_id)
     if club is None:
         raise HTTPException(404, "Club not found")
     return club
