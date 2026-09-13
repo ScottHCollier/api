@@ -698,6 +698,14 @@ def resolve_club(
     return club
 
 
+@app.get("/api/v1/public/clubs/by-slug/{slug}", response_model=ClubRead, response_model_exclude_none=True, tags=["clubs"])
+def get_public_club_by_slug(slug: str, session: DatabaseSession) -> Club:
+    club = session.scalar(select(Club).where(Club.slug == slug.lower()))
+    if club is None:
+        raise HTTPException(404, "Club not found")
+    return club
+
+
 @app.get(
     "/api/v1/public/clubs/{club_id}",
     response_model=ClubRead,
