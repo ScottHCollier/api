@@ -24,3 +24,9 @@ services:
 
   fixture-importer:
     restart: unless-stopped
+    command: ["sh", "scripts/import_daily.sh"]
+    environment:
+      FA_IMPORT_ENABLED: "true"
+      FA_IMPORT_INTERVAL_SECONDS: ${FA_IMPORT_INTERVAL_SECONDS:-86400}
+      FA_IMPORT_QUEUE_INTERVAL_SECONDS: ${FA_IMPORT_QUEUE_INTERVAL_SECONDS:-15}
+      FA_REQUEST_TIMEOUT_SECONDS: ${FA_REQUEST_TIMEOUT_SECONDS:-20}
