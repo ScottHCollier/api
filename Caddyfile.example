@@ -1,0 +1,12 @@
+# Copy the relevant block to /etc/caddy/Caddyfile on the VPS.
+# Use one hostname per environment; do not point staging and production at
+# the same Compose project or database.
+
+api.staging.scottcollier.dev {
+    reverse_proxy 127.0.0.1:8000
+}
+
+# Uncomment for production when the production Compose stack is running.
+# api.scottcollier.dev {
+#     reverse_proxy 127.0.0.1:8000
+# }
