@@ -1,0 +1,35 @@
+name: Deploy staging API
+
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-api-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      - name: Pull and deploy staging API
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" "cd '$VPS_APP_DIR' && git checkout staging && git pull --ff-only origin staging && docker compose --env-file '$VPS_APP_DIR/.env' -f compose.yaml -f compose.production.yaml -p final-third-staging up -d --build"

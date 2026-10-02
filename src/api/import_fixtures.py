@@ -35,6 +35,7 @@ def _team_name_matches(configured: str, provider: str) -> bool:
     ignored = {
         "afc", "city", "fc", "first", "ladies", "men", "mens", "reserves",
         "reserve", "town", "u", "united", "wanderers", "women", "womens",
+        "1st", "2nd", "3rd", "4th",
     }
     configured_tokens = {
         token for token in re.findall(r"[a-z0-9]+", configured.lower())
@@ -48,15 +49,35 @@ def _team_name_matches(configured: str, provider: str) -> bool:
 
 
 def _fixture_team_details(
-    item: FullTimeFixture, team: Team
+    item: FullTimeFixture, source_team_name: str
 ) -> tuple[str | None, bool | None]:
-    """Resolve the imported opposition against the team's provider display name."""
-    team_name = team.external_name or team.name
-    if _team_name_matches(team_name, item.home_team):
+    """Resolve opposition against the team name found on the provider page."""
+    if _team_name_matches(source_team_name, item.home_team):
         return item.away_team, True
-    if _team_name_matches(team_name, item.away_team):
+    if _team_name_matches(source_team_name, item.away_team):
         return item.home_team, False
     return None, None
+
+
+def _resolve_source_team_name(items: list[FullTimeFixture], team: Team) -> str:
+    """Choose the linked team's display name from the imported fixture rows."""
+    names: dict[str, int] = {}
+    for item in items:
+        names[item.home_team] = names.get(item.home_team, 0) + 1
+        names[item.away_team] = names.get(item.away_team, 0) + 1
+    if not names:
+        return team.external_name or team.name
+
+    def score(name: str) -> tuple[int, int]:
+        return (
+            sum(
+                int(_team_name_matches(name, candidate)) * count
+                for candidate, count in names.items()
+            ),
+            names[name],
+        )
+
+    return max(names, key=score)
 
 
 def import_fixtures(
@@ -138,6 +159,7 @@ def import_fixtures(
                 if not parsed_by_id and fetch_errors:
                     raise fetch_errors[-1]
                 parsed = list(parsed_by_id.values())
+                source_team_name = _resolve_source_team_name(parsed, team)
                 standings = []
                 if team.external_league_id:
                     try:
@@ -165,10 +187,10 @@ def import_fixtures(
                 skipped += 1
                 continue
             team_created = team_updated = 0
+            # Repair stale values left by older imports.
+            team.external_name = source_team_name
             for item in parsed:
-                opposition, is_home = _fixture_team_details(item, team)
-                if team.external_name is None and is_home is not None:
-                    team.external_name = item.home_team if is_home else item.away_team
+                opposition, is_home = _fixture_team_details(item, source_team_name)
                 fixture = session.scalar(
                     select(Fixture).where(
                         Fixture.external_provider == "fa_full_time",

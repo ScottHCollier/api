@@ -1,12 +1,15 @@
 from datetime import datetime
+from types import SimpleNamespace
 
 from api.fa_full_time import (
+    FullTimeFixture,
     current_season_url,
     current_table_url,
     parse_fixtures,
     parse_standings,
     parse_upcoming_fixtures,
 )
+from api.import_fixtures import _fixture_team_details, _resolve_source_team_name
 
 
 def test_current_season_url_uses_stable_team_identity():
@@ -91,3 +94,18 @@ def test_parser_reads_full_time_standings():
     assert standings[0].played == 5
     assert standings[0].goal_difference == 8
     assert standings[0].points == 13
+
+
+def test_import_repairs_stale_provider_name_from_fixture_frequency():
+    items = [
+        FullTimeFixture("1", "Prem", "Montpellier (Cheltenham) 1st vs. Bibury First", "Montpellier (Cheltenham) 1st", "Bibury First", datetime.now(), "TBC", 1, 0),
+        FullTimeFixture("2", "Prem", "Shurdington Rovers 1st vs. Montpellier (Cheltenham) 1st", "Shurdington Rovers 1st", "Montpellier (Cheltenham) 1st", datetime.now(), "TBC", 0, 2),
+        FullTimeFixture("3", "Prem", "FC Wickhamford Firsts vs. Montpellier (Cheltenham) 1st", "FC Wickhamford Firsts", "Montpellier (Cheltenham) 1st", datetime.now(), "TBC", 0, 2),
+    ]
+    team = SimpleNamespace(name="Men's Firsts", external_name="FC Wickhamford Firsts")
+
+    source_name = _resolve_source_team_name(items, team)
+
+    assert source_name == "Montpellier (Cheltenham) 1st"
+    assert _fixture_team_details(items[0], source_name) == ("Bibury First", True)
+    assert _fixture_team_details(items[1], source_name) == ("Shurdington Rovers 1st", False)
